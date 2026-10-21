@@ -147,7 +147,6 @@
             font-weight: bold;
         }
 
-        /* 💡 정상 범위일 때 표시되는 초록색 배지 스타일 추가 */
         .normal-badge {
             background-color: var(--success-bg);
             color: var(--success-color);
@@ -182,10 +181,7 @@
     </div>
 
     <script>
-        // ⚠️ 배포된 웹 앱 URL
         const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbxtCtwbjwbdd-yfKoO6S2FjHalKaYJJ-GhSi6SCSDTicS3T821pgbB211ryiTbPmtX_/exec";
-
-        // 정상으로 간주하는 문구들
         const NORMAL_VALUES = ["양호", "없음", "적정", "정상", "해당없음", "-"];
 
         async function loadSheetData() {
@@ -193,6 +189,7 @@
             const timeSpan = document.getElementById("update-time");
 
             try {
+                // 캐시 방지용 파라미터 추가
                 const response = await fetch(WEB_APP_URL + "?t=" + new Date().getTime());
                 const rows = await response.json();
 
@@ -201,27 +198,40 @@
                     return;
                 }
 
-                // 4행(인덱스 3)이 컬럼 제목(헤더)
                 const headers = rows[3]; 
-                // 5행(인덱스 4)부터 실제 제출된 데이터 행이므로 slice(4) 적용 후 최신순 정렬
                 const dataRows = rows.slice(4).reverse(); 
 
                 let htmlContent = "";
 
                 dataRows.forEach(row => {
-                    // A열(인덱스 0) 제출일시가 비어있으면 빈 행으로 간주하고 패스
                     if (!row[0] || String(row[0]).trim() === "") return;
 
-                    let rawDate = String(row[0]);
-                    let formattedDate = rawDate.replace("T", " ").substring(0, 16);
+                    // [시간 수정] 스프레드시트의 날짜/시간 객체 오차(UTC 변환 등)를 방지하고 정확한 로컬 시간으로 변환
+                    let rawDateStr = String(row[0]).trim();
+                    let formattedDate = rawDateStr;
                     
-                    // C열(인덱스 2): 작업자 이름
+                    if (rawDateStr.includes("T") || rawDateStr.includes("Z")) {
+                        let d = new Date(rawDateStr);
+                        if (!isNaN(d.getTime())) {
+                            // 로컬 시간(KST) 기준으로 연, 월, 일, 시, 분 추출
+                            let year = d.getFullYear();
+                            let month = String(d.getMonth() + 1).padStart(2, '0');
+                            let day = String(d.getDate()).padStart(2, '0');
+                            let hours = String(d.getHours()).padStart(2, '0');
+                            let minutes = String(d.getMinutes()).padStart(2, '0');
+                            formattedDate = `${year}-${month}-${day} ${hours}:${minutes}`;
+                        } else {
+                            formattedDate = rawDateStr.replace("T", " ").substring(0, 16);
+                        }
+                    } else if (rawDateStr.length > 16) {
+                        formattedDate = rawDateStr.substring(0, 16);
+                    }
+                    
                     let worker = row[2] ? String(row[2]).trim() : "미지정";
 
-                    let issues = [];     // 조치 필요 (빨간색) 항목들
-                    let normalDisplays = []; // 정상 범위라 초록색으로 표시할 항목들 (온도, 습도 등)
+                    let issues = [];     
+                    let normalDisplays = []; 
 
-                    // 1) D열(인덱스 3)부터 Q열(인덱스 16)까지 점검 항목 검사 ("양호" 여부)
                     for (let i = 3; i <= 16; i++) {
                         const headerName = String(headers[i] || "").trim();
                         const val = String(row[i] || "").trim();
@@ -233,37 +243,47 @@
                         }
                     }
 
-                    // 2) R열(인덱스 17): 일일온도 체크 (기준 초과 시 빨강, 정상 시 초록 표시)
+                    // 일일온도 체크 (R열 / 인덱스 17)
                     const tempRaw = row[17] ? String(row[17]).trim() : "";
                     const tempValStr = tempRaw.replace("℃", "").replace("°C", "").trim();
                     const tempVal = parseFloat(tempValStr);
-                    const TEMP_LIMIT = 30; // 💡 기준 온도 (필요시 수정 가능)
+                    const TEMP_LIMIT = 30; 
 
                     if (tempRaw !== "") {
+                        const displayTemp = tempRaw.includes("℃") || tempRaw.includes("°C") ? tempRaw : tempRaw + "℃";
                         if (!isNaN(tempVal) && tempVal > TEMP_LIMIT) {
-                            issues.push(`일일온도 초과: ${tempRaw} (기준 ${TEMP_LIMIT}℃)`);
+                            issues.push(`일일온도 초과: ${displayTemp} (기준 ${TEMP_LIMIT}℃)`);
                         } else {
-                            normalDisplays.push(`일일온도: ${tempRaw} (정상)`);
+                            normalDisplays.push(`일일온도: ${displayTemp} (정상)`);
                         }
                     }
 
-                    // 3) S열(인덱스 18): 일일습도 체크 (기준 초과 시 빨강, 정상 시 초록 표시)
+                    // [습도 수정] 소수점 형태(0.49 등)를 정상적인 nn% 형태(49% 등)로 보정
                     const humRaw = row[18] ? String(row[18]).trim() : "";
-                    const humValStr = humRaw.replace("%", "").trim();
-                    const humVal = parseFloat(humValStr);
-                    const HUMIDITY_LIMIT = 60; // 💡 기준 습도 (필요시 수정 가능)
+                    let humClean = humRaw.replace("%", "").trim();
+                    let humVal = parseFloat(humClean);
+                    
+                    if (!isNaN(humVal)) {
+                        if (humVal > 0 && humVal < 1) {
+                            humVal = Math.round(humVal * 100);
+                        } else {
+                            humVal = Math.round(humVal);
+                        }
+                    }
+
+                    const HUMIDITY_LIMIT = 60; 
 
                     if (humRaw !== "") {
+                        const displayHum = humVal + "%";
                         if (!isNaN(humVal) && humVal > HUMIDITY_LIMIT) {
-                            issues.push(`일일습도 초과: ${humRaw} (기준 ${HUMIDITY_LIMIT}%)`);
+                            issues.push(`일일습도 초과: ${displayHum} (기준 ${HUMIDITY_LIMIT}%)`);
                         } else {
-                            normalDisplays.push(`일일습도: ${humRaw} (정상)`);
+                            normalDisplays.push(`일일습도: ${displayHum} (정상)`);
                         }
                     }
 
                     const hasIssue = issues.length > 0;
 
-                    // 카드 HTML 생성
                     htmlContent += `
                         <div class="log-card ${hasIssue ? 'has-issue' : ''}">
                             <div class="card-header">
