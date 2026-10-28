@@ -103,6 +103,11 @@
             color: var(--text-main);
         }
 
+        /* 제출시각 이탈 시 글자색만 빨간색으로 변경 */
+        .card-date.time-warning {
+            color: var(--danger-color);
+        }
+
         .card-worker {
             font-size: 0.8rem;
             color: var(--text-sub);
@@ -189,7 +194,6 @@
             const timeSpan = document.getElementById("update-time");
 
             try {
-                // 캐시 방지용 파라미터 추가
                 const response = await fetch(WEB_APP_URL + "?t=" + new Date().getTime());
                 const rows = await response.json();
 
@@ -206,27 +210,41 @@
                 dataRows.forEach(row => {
                     if (!row[0] || String(row[0]).trim() === "") return;
 
-                    // [시간 수정] 스프레드시트의 날짜/시간 객체 오차(UTC 변환 등)를 방지하고 정확한 로컬 시간으로 변환
                     let rawDateStr = String(row[0]).trim();
                     let formattedDate = rawDateStr;
+                    let hours = 0;
+                    let minutes = 0;
                     
                     if (rawDateStr.includes("T") || rawDateStr.includes("Z")) {
                         let d = new Date(rawDateStr);
                         if (!isNaN(d.getTime())) {
-                            // 로컬 시간(KST) 기준으로 연, 월, 일, 시, 분 추출
                             let year = d.getFullYear();
                             let month = String(d.getMonth() + 1).padStart(2, '0');
                             let day = String(d.getDate()).padStart(2, '0');
-                            let hours = String(d.getHours()).padStart(2, '0');
-                            let minutes = String(d.getMinutes()).padStart(2, '0');
-                            formattedDate = `${year}-${month}-${day} ${hours}:${minutes}`;
+                            hours = d.getHours();
+                            minutes = d.getMinutes();
+                            formattedDate = `${year}-${month}-${day} ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
                         } else {
                             formattedDate = rawDateStr.replace("T", " ").substring(0, 16);
                         }
                     } else if (rawDateStr.length > 16) {
                         formattedDate = rawDateStr.substring(0, 16);
+                        let timePart = formattedDate.split(" ")[1];
+                        if (timePart && timePart.includes(":")) {
+                            let parts = timePart.split(":");
+                            hours = parseInt(parts[0], 10);
+                            minutes = parseInt(parts[1], 10);
+                        }
                     }
-                    
+
+                    // 오전 8시 ~ 9시 사이가 아닌 경우 체크 (8시 대가 아니면 참)
+                    let isTimeOutOfRange = false;
+                    if (!isNaN(hours)) {
+                        if (hours < 8 || hours >= 9) {
+                            isTimeOutOfRange = true;
+                        }
+                    }
+
                     let worker = row[2] ? String(row[2]).trim() : "미지정";
 
                     let issues = [];     
@@ -258,7 +276,7 @@
                         }
                     }
 
-                    // [습도 수정] 소수점 형태(0.49 등)를 정상적인 nn% 형태(49% 등)로 보정
+                    // 습도 체크 (S열 / 인덱스 18)
                     const humRaw = row[18] ? String(row[18]).trim() : "";
                     let humClean = humRaw.replace("%", "").trim();
                     let humVal = parseFloat(humClean);
@@ -287,7 +305,7 @@
                     htmlContent += `
                         <div class="log-card ${hasIssue ? 'has-issue' : ''}">
                             <div class="card-header">
-                                <span class="card-date">${formattedDate}</span>
+                                <span class="card-date ${isTimeOutOfRange ? 'time-warning' : ''}">${formattedDate}</span>
                                 <span class="card-worker">작업자: ${worker}</span>
                             </div>
                             <div class="card-body">
